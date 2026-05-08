@@ -1,0 +1,6 @@
+{
+  "name": "Higher or Lower: FRC EPA",
+  "description": "Guess which FRC robot has a higher Expected Point Contribution (EPA) in 2026! Uses data from Statbotics and The Blue Alliance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
