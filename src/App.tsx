@@ -1,16 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Settings, RefreshCw, Trophy, Play, Check, X, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
-import { fetchAllTeams, fetchTeamImage, preloadImage, shuffle, StatboticsTeam, GameTeam } from './lib/api';
+import { fetchAllTeams, fetchTeamImage, preloadImage, shuffle, StatboticsTeam, GameTeam, fetchTeamBlueBanners } from './lib/api';
 import { cn } from './lib/utils';
 
 type GameState = 'SETUP' | 'LOADING_INITIAL' | 'PLAYING' | 'REVEALING' | 'GAME_OVER';
 
 export default function App() {
-  // To hardcode your key directly, replace process.env.TBA_API_KEY below with your actual key string like: "your_key_here"
-  const [tbaKey, setTbaKey] = useState<string>(() => process.env.TBA_API_KEY || localStorage.getItem('tba_api_key') || '');
-  const [gameState, setGameState] = useState<GameState>(tbaKey ? 'LOADING_INITIAL' : 'SETUP');
-  const [inputKey, setInputKey] = useState(tbaKey);
+  const [gameMode, setGameMode] = useState<'EPA' | 'BANNERS'>('EPA');
+  const [gameState, setGameState] = useState<GameState>('SETUP');
 
   const [availableTeams, setAvailableTeams] = useState<StatboticsTeam[]>([]);
   const [loadedTeams, setLoadedTeams] = useState<GameTeam[]>([]);
@@ -24,36 +22,48 @@ export default function App() {
   };
 
   const [streak, setStreak] = useState(0);
-  const [highScore, setHighScore] = useState<number>(() => parseInt(localStorage.getItem('frc_high_score') || '0', 10));
+  const [highScoreEPA, setHighScoreEPA] = useState<number>(() => parseInt(localStorage.getItem('frc_high_score_epa') || '0', 10));
+  const [highScoreBanners, setHighScoreBanners] = useState<number>(() => parseInt(localStorage.getItem('frc_high_score_banners') || '0', 10));
   
   const [guessState, setGuessState] = useState<'IDLE' | 'CORRECT' | 'WRONG'>('IDLE');
   const isFetchingRef = useRef(false);
 
   // Background queue maintenance loop
   const maintainQueue = async () => {
-      if (isFetchingRef.current || !tbaKey) return;
+      if (isFetchingRef.current) return;
       isFetchingRef.current = true;
 
       try {
-          while (loadedTeamsRef.current.length < 6 && availableTeamsRef.current.length > 0 && tbaKey) {
+          while (loadedTeamsRef.current.length < 6 && availableTeamsRef.current.length > 0) {
               const batch = availableTeamsRef.current.splice(0, 5); // Take 5 to evaluate in parallel
 
               const promises = batch.map(async (t) => {
                   try {
-                      const imgUrl = await fetchTeamImage(t.team, tbaKey);
-                      if (imgUrl) {
-                          const isValid = await preloadImage(imgUrl);
-                          if (isValid) {
+                      if (gameMode === 'EPA') {
+                          const imgUrl = await fetchTeamImage(t.team);
+                          if (imgUrl) {
+                              const isValid = await preloadImage(imgUrl);
+                              if (isValid) {
+                                  return {
+                                      teamNumber: t.team,
+                                      name: t.name,
+                                      epa: Math.round(t.epa.total_points.mean * 10) / 10,
+                                      imageUrl: imgUrl
+                                  } as GameTeam;
+                              }
+                          }
+                      } else {
+                          const banners = await fetchTeamBlueBanners(t.team);
+                          if (banners !== null && banners > 0) {
                               return {
                                   teamNumber: t.team,
                                   name: t.name,
-                                  epa: Math.round(t.epa.total_points.mean * 10) / 10,
-                                  imageUrl: imgUrl
+                                  blueBanners: banners
                               } as GameTeam;
                           }
                       }
                   } catch (e: any) {
-                      if (e.message === 'Invalid TBA API Key') throw e;
+                      console.error(e);
                   }
                   return null;
               });
@@ -69,14 +79,9 @@ export default function App() {
               }
           }
       } catch (e: any) {
-          if (e.message === 'Invalid TBA API Key') {
-              setGameState('SETUP');
-              localStorage.removeItem('tba_api_key');
-              setTbaKey('');
-          }
+         console.error(e);
       } finally {
           isFetchingRef.current = false;
-          // After finishing a queue check, if we're still missing items and have more available, the useEffect will trigger it again or we can let it be triggered on the next pop
       }
   };
 
@@ -131,11 +136,8 @@ export default function App() {
       setGameState('LOADING_INITIAL');
   };
 
-  const handleSaveConfig = () => {
-    const key = inputKey.trim();
-    if (!key) return;
-    localStorage.setItem('tba_api_key', key);
-    setTbaKey(key);
+  const handleModeSelect = (mode: 'EPA' | 'BANNERS') => {
+    setGameMode(mode);
     setGameState('LOADING_INITIAL');
   };
 
@@ -146,7 +148,13 @@ export default function App() {
       
       setGameState('REVEALING');
       
-      const isHigher = tB.epa >= tA.epa;
+      let isHigher = false;
+      if (gameMode === 'EPA') {
+          isHigher = (tB.epa || 0) >= (tA.epa || 0);
+      } else {
+          isHigher = (tB.blueBanners || 0) >= (tA.blueBanners || 0);
+      }
+      
       const isCorrect = (type === 'HIGHER' && isHigher) || (type === 'LOWER' && !isHigher);
       
       setGuessState(isCorrect ? 'CORRECT' : 'WRONG');
@@ -155,9 +163,12 @@ export default function App() {
           if (isCorrect) {
               const newStreak = streak + 1;
               setStreak(newStreak);
-              if (newStreak > highScore) {
-                  setHighScore(newStreak);
-                  localStorage.setItem('frc_high_score', newStreak.toString());
+              if (gameMode === 'EPA' && newStreak > highScoreEPA) {
+                  setHighScoreEPA(newStreak);
+                  localStorage.setItem('frc_high_score_epa', newStreak.toString());
+              } else if (gameMode === 'BANNERS' && newStreak > highScoreBanners) {
+                  setHighScoreBanners(newStreak);
+                  localStorage.setItem('frc_high_score_banners', newStreak.toString());
               }
               // shift array and go back to playing
               loadedTeamsRef.current = loadedTeamsRef.current.slice(1);
@@ -173,39 +184,34 @@ export default function App() {
   if (gameState === 'SETUP') {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 font-sans text-slate-100">
-        <div className="max-w-md w-full bg-slate-900 rounded-3xl shadow-2xl border border-slate-800 p-8 text-center space-y-6">
+        <div className="max-w-md w-full bg-slate-900 rounded-3xl shadow-2xl border border-slate-800 p-8 text-center space-y-8">
             <div className="w-16 h-16 bg-indigo-600 rounded-2xl mx-auto flex items-center justify-center shadow-lg">
-                <Settings className="w-8 h-8 text-white" />
+                <Trophy className="w-8 h-8 text-white" />
             </div>
             <div>
                 <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Higher or Lower</h1>
-                <p className="text-slate-400 font-medium tracking-widest uppercase text-xs">FRC 2026 EPA Edition</p>
+                <p className="text-slate-400 font-medium tracking-widest uppercase text-xs">FRC Edition</p>
                 <p className="text-sm text-slate-400 mt-4 leading-relaxed">
-                  To play, please provide a Read API Key from The Blue Alliance to fetch robot photos. Your key is stored locally in your browser.
+                  Test your FRC knowledge. Choose a mode to play.
                 </p>
             </div>
             
             <div className="space-y-4 pt-2">
-                <input 
-                  type="text" 
-                  value={inputKey} 
-                  onChange={e => setInputKey(e.target.value)}
-                  placeholder="Enter TBA Read API Key..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-4 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-shadow"
-                />
                 <button 
-                  onClick={handleSaveConfig}
-                  disabled={!inputKey.trim()}
-                  className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 px-4 rounded-xl flex items-center justify-center gap-2 transition-colors"
+                  onClick={() => handleModeSelect('EPA')}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-4 rounded-xl flex items-center justify-center gap-2 transition-colors shadow-lg"
                 >
                   <Play className="w-5 h-5 fill-current" />
-                  Start Playing
+                  Statbotics EPA Mode
+                </button>
+                <button 
+                  onClick={() => handleModeSelect('BANNERS')}
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 px-4 rounded-xl flex items-center justify-center gap-2 transition-colors shadow-lg"
+                >
+                  <Trophy className="w-5 h-5" />
+                  Blue Banners Mode
                 </button>
             </div>
-            
-            <p className="text-xs text-slate-500 pt-2">
-              Get an API key at <a href="https://www.thebluealliance.com/account" target="_blank" rel="noreferrer" className="text-indigo-400 hover:text-indigo-300 transition-colors">thebluealliance.com/account</a>
-            </p>
         </div>
       </div>
     );
@@ -244,15 +250,14 @@ export default function App() {
                 </div>
                 <div className="text-center">
                     <p className="text-[10px] text-slate-500 uppercase font-bold tracking-tighter">Best Score</p>
-                    <p className="text-2xl md:text-3xl font-black text-slate-200 leading-none">{highScore}</p>
+                    <p className="text-2xl md:text-3xl font-black text-slate-200 leading-none">{gameMode === 'EPA' ? highScoreEPA : highScoreBanners}</p>
                 </div>
                 <button 
                     onClick={() => {
-                        localStorage.removeItem('tba_api_key');
                         setGameState('SETUP');
                     }}
                     className="ml-2 bg-slate-900 border border-slate-700 hover:bg-slate-800 p-2.5 rounded-lg text-slate-400 hover:text-white transition-colors"
-                    title="Change API Key"
+                    title="Change Mode"
                 >
                     <Settings className="w-5 h-5" />
                 </button>
@@ -268,10 +273,17 @@ export default function App() {
                   <div className="absolute top-4 left-4 z-20">
                     <span className="px-3 py-1 bg-slate-950/80 backdrop-blur-md rounded-full text-xs font-bold border border-slate-700">TEAM {teamA.teamNumber}</span>
                   </div>
-                  <div className="flex-1 min-h-0 bg-slate-800 relative grow shrink">
-                      <img src={teamA.imageUrl} alt={teamA.name} className="absolute inset-0 w-full h-full object-cover object-center" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/20 to-transparent z-10 pointer-events-none"></div>
-                  </div>
+                  {gameMode === 'EPA' ? (
+                      <div className="flex-1 min-h-0 bg-slate-800 relative grow shrink">
+                          <img src={teamA.imageUrl} alt={teamA.name} className="absolute inset-0 w-full h-full object-cover object-center" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/20 to-transparent z-10 pointer-events-none"></div>
+                      </div>
+                  ) : (
+                      <div className="flex-1 min-h-0 bg-slate-800 relative grow shrink flex items-center justify-center overflow-hidden">
+                          <div className="absolute inset-0 bg-emerald-900/20 mix-blend-multiply"></div>
+                          <p className="text-[12rem] font-black text-slate-700/20 pointer-events-none select-none absolute transform -rotate-12">{teamA.teamNumber}</p>
+                      </div>
+                  )}
                   
                   <div className="p-6 md:p-8 flex flex-col justify-between z-20 relative bg-slate-900 shrink-0">
                       <div className="mb-4 md:mb-0">
@@ -280,8 +292,8 @@ export default function App() {
                       </div>
                       
                       <div className="bg-slate-950/50 p-6 rounded-2xl border border-slate-800/50">
-                          <p className="text-xs text-slate-500 uppercase mb-2">Statbotics EPA</p>
-                          <p className="text-5xl md:text-6xl font-black text-white tracking-tighter italic">{teamA.epa}</p>
+                          <p className="text-xs text-slate-500 uppercase mb-2">{gameMode === 'EPA' ? 'Statbotics EPA' : 'Blue Banners'}</p>
+                          <p className="text-5xl md:text-6xl font-black text-white tracking-tighter italic">{gameMode === 'EPA' ? teamA.epa : teamA.blueBanners}</p>
                       </div>
                   </div>
               </div>
@@ -298,10 +310,17 @@ export default function App() {
                   <div className="absolute top-4 right-4 z-20">
                     <span className="px-3 py-1 bg-indigo-600 rounded-full text-xs font-bold shadow-lg">NEXT UP</span>
                   </div>
-                  <div className="flex-1 min-h-0 bg-slate-800 relative grow shrink">
-                      <img src={teamB.imageUrl} alt={teamB.name} className="absolute inset-0 w-full h-full object-cover object-center" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/20 to-transparent z-10 pointer-events-none"></div>
-                  </div>
+                  {gameMode === 'EPA' ? (
+                      <div className="flex-1 min-h-0 bg-slate-800 relative grow shrink">
+                          <img src={teamB.imageUrl} alt={teamB.name} className="absolute inset-0 w-full h-full object-cover object-center" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/20 to-transparent z-10 pointer-events-none"></div>
+                      </div>
+                  ) : (
+                      <div className="flex-1 min-h-0 bg-slate-800 relative grow shrink flex items-center justify-center overflow-hidden">
+                          <div className="absolute inset-0 bg-indigo-900/20 mix-blend-multiply"></div>
+                          <p className="text-[12rem] font-black text-slate-700/20 pointer-events-none select-none absolute transform -rotate-12">{teamB.teamNumber}</p>
+                      </div>
+                  )}
                   
                   <div className="p-6 md:p-8 flex flex-col justify-between z-20 relative bg-slate-900 shrink-0">
                       <div className="text-left md:text-right mb-6 md:mb-0">
@@ -334,7 +353,7 @@ export default function App() {
                                     animate={{ scale: 1, opacity: 1, y: 0 }}
                                     className="bg-slate-950/50 p-6 rounded-2xl border border-slate-800/50 text-left md:text-right"
                                 >
-                                    <p className="text-xs text-slate-500 uppercase mb-2">Statbotics EPA</p>
+                                    <p className="text-xs text-slate-500 uppercase mb-2">{gameMode === 'EPA' ? 'Statbotics EPA' : 'Blue Banners'}</p>
                                     <motion.p 
                                         initial={{ y: 10, opacity: 0 }}
                                         animate={{ y: 0, opacity: 1 }}
@@ -344,7 +363,7 @@ export default function App() {
                                             guessState === 'CORRECT' ? "text-emerald-400" : "text-rose-400"
                                         )}
                                     >
-                                        {teamB.epa}
+                                        {gameMode === 'EPA' ? teamB.epa : teamB.blueBanners}
                                     </motion.p>
                                     
                                     <div className="flex justify-start md:justify-end mt-2">

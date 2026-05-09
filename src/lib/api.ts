@@ -20,8 +20,9 @@ export interface StatboticsTeam {
 export interface GameTeam {
     teamNumber: number;
     name: string;
-    epa: number;
-    imageUrl: string;
+    epa?: number;
+    blueBanners?: number;
+    imageUrl?: string;
 }
 
 // Fisher-Yates array shuffle
@@ -49,10 +50,8 @@ export async function fetchAllTeams(): Promise<StatboticsTeam[]> {
     return results.flat();
 }
 
-export async function fetchTeamImage(teamStr: string | number, tbaKey: string): Promise<string | null> {
-    const res = await fetch(`https://www.thebluealliance.com/api/v3/team/frc${teamStr}/media/2026`, {
-        headers: { 'X-TBA-Auth-Key': tbaKey }
-    });
+export async function fetchTeamImage(teamStr: string | number): Promise<string | null> {
+    const res = await fetch(`/api/tba/team/${teamStr}/media/2026`);
     if (!res.ok) {
         if (res.status === 401) throw new Error("Invalid TBA API Key");
         return null;
@@ -84,6 +83,16 @@ export async function fetchTeamImage(teamStr: string | number, tbaKey: string): 
     }
     
     return candidateUrl;
+}
+
+export async function fetchTeamBlueBanners(teamStr: string | number): Promise<number | null> {
+    const res = await fetch(`/api/tba/team/${teamStr}/blue-banners`);
+    if (!res.ok) {
+        if (res.status === 401) throw new Error("Invalid TBA API Key");
+        return null;
+    }
+    const data = await res.json();
+    return data.count;
 }
 
 export function preloadImage(url: string): Promise<boolean> {
