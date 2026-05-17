@@ -1,7 +1,7 @@
-# [Higher or Lower for FRC](https://frc2026-higher-or-lower.onrender.com)
+# [Higher or Lower for FRC](https://higher-or-lower-frc-epa-542761489111.us-west1.run.app/)
 Randomly selects robots from the 2026 game Rebuilt with pictures from [TBA](https://www.thebluealliance.com/) and compares EPA from [Statbotics](https://www.statbotics.io/) or number of Blue Banners, depending on the mode.
 
-https://frc2026-higher-or-lower.onrender.com
+https://higher-or-lower-frc-epa-542761489111.us-west1.run.app/
 
 ## Run Locally
 
